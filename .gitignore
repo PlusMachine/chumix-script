@@ -1,0 +1,16 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Dist artifacts: keep only the runnable entrypoint
+dist/**
+!dist/test-poker-session.js
+
+# Runtime/test artifacts
+dist/poker-test-session.log
+dist/current_room_id.txt
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
