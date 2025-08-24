@@ -4,8 +4,8 @@
   "description": "Scripts for testing poker session backend",
   "main": "dist/test-poker-session.js",
   "scripts": {
-  "build": "tsc",
-  "test": "node dist/test-poker-session.js"
+    "build": "tsc",
+    "test": "node dist/test-poker-session.js"
   },
   "dependencies": {
     "axios": "^1.6.2",

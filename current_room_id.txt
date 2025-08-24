@@ -1,0 +1,2 @@
+DEPRECATED: этот файл не используется.
+Укажите/прочитайте Room ID только в dist/current_room_id.txt

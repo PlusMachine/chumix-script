@@ -54,6 +54,67 @@ const config = {
     ],
     logFile: path_1.default.join(__dirname, 'poker-test-session.log')
 };
+
+// Загрузка конфига ручного управления первым игроком из внешнего файла
+const defaultManualControl = {
+    firstPlayerAction: {
+        // режимы: 'bot' (как сейчас), 'force' (задать конкретное действие), 'random' (рандом из доступных)
+        mode: 'bot',
+        // области применения: 'always' (всегда), 'first-action-session' (только один раз за сессию), 'first-action-each-hand' (первое действие в каждой раздаче)
+        scope: 'first-action-session',
+        // какое действие форсить в режиме force
+        forceAction: 'fold', // fold|check|call|bet|raise|allin
+        // что делать, если требуемое действие недоступно
+        fallbackOnUnavailable: 'call', // call|check|fold
+        // параметры размера ставки/рейза
+        betSizing: {
+            type: 'min', // min|max|percent
+            percent: 0.5
+        }
+    }
+};
+
+function loadManualControlConfig() {
+    try {
+        const candidates = [
+            path_1.default.join(__dirname, 'first-player.config.json'),
+            path_1.default.join(__dirname, '..', 'first-player.config.json')
+        ];
+        for (const p of candidates) {
+            if (fs_1.default.existsSync(p)) {
+                const raw = fs_1.default.readFileSync(p, 'utf-8');
+                const userCfg = JSON.parse(raw);
+                const merged = {
+                    ...defaultManualControl,
+                    ...userCfg,
+                    firstPlayerAction: {
+                        ...defaultManualControl.firstPlayerAction,
+                        ...(userCfg.firstPlayerAction || {}),
+                        betSizing: {
+                            ...defaultManualControl.firstPlayerAction.betSizing,
+                            ...(((userCfg.firstPlayerAction || {}).betSizing) || {})
+                        }
+                    }
+                };
+                console.log(`[manual-control] Загружен конфиг: ${p}`);
+                return merged;
+            }
+        }
+    }
+    catch (e) {
+        console.error('[manual-control] Ошибка загрузки first-player.config.json:', e);
+    }
+    console.log('[manual-control] Используется конфиг по умолчанию');
+    return defaultManualControl;
+}
+
+const manualControl = loadManualControlConfig();
+try {
+    const mc = JSON.stringify(manualControl);
+    // Используем logger, чтобы попасть в файл лога
+    // Логгер объявлен ниже, поэтому временно используем консоль, а затем продублируем после инициализации логгера
+    console.log(`[manual-control] Эффективный конфиг: ${mc}`);
+} catch { }
 // Инициализация логгера
 const logger = {
     log: (message) => {
@@ -71,6 +132,10 @@ const logger = {
 };
 // Создаем файл лога или очищаем существующий
 fs_1.default.writeFileSync(config.logFile, '--- POKER TEST SESSION LOG ---\n');
+// Дублируем конфиг manual-control уже через logger
+try {
+    logger.log(`[manual-control] Эффективный конфиг: ${JSON.stringify(manualControl)}`);
+} catch { }
 // Глобальные переменные для хранения состояния
 const state = {
     roomId: existingRoomId, // Инициализируем roomId значением из аргументов командной строки, если оно есть
@@ -92,6 +157,9 @@ const state = {
     },
     moodUpdateCounter: 0 // Счетчик для периодического обновления настроения
 };
+// Флаги для контроля области применения ручного действия первого игрока
+state.firstActionAppliedSession = false;
+state.firstActionAppliedInCurrentHand = false;
 // Функция для сохранения roomId в файл
 function saveRoomIdToFile(roomId) {
     try {
@@ -268,6 +336,8 @@ function setupPlayerListeners(playerData) {
             });
 
             logger.log(`[${name}] Следующие действия будут задержаны на 20 секунд для просмотра результатов раздачи`);
+            // Сброс флага "первое действие в раздаче" для следующей раздачи
+            state.firstActionAppliedInCurrentHand = false;
         }
 
         // Проверяем, началась ли игра
@@ -399,6 +469,8 @@ function setupSpectatorListeners(spectatorData) {
             });
 
             logger.log(`[Spectator] Следующие действия будут задержаны на 20 секунд для просмотра результатов раздачи`);
+            // Сброс флага "первое действие в раздаче" для следующей раздачи
+            state.firstActionAppliedInCurrentHand = false;
         }
 
         // Проверяем, началась ли игра
@@ -492,7 +564,7 @@ function updatePlayerMoods() {
             const eventType = Math.random();
             const playerNames = ['TightTiger', 'WildWolf', 'SlyFox', 'CoolBear', 'SharpHawk', 'BoldLion'];
             const playerName = playerNames[parseInt(seatIndex)] || `Player ${parseInt(seatIndex) + 1}`;
-            
+
             if (eventType < 0.25) {
                 // Умеренный тилт (снижено влияние)
                 mood.tilt += Math.random() * 0.3 + 0.1; // было 0.5 + 0.2
@@ -994,6 +1066,8 @@ function handleTableState(tableState) {
             });
 
             logger.log(`[handleTableState] Следующие действия будут задержаны на 20 секунд для просмотра результатов раздачи`);
+            // Сброс флага "первое действие в раздаче" для следующей раздачи
+            state.firstActionAppliedInCurrentHand = false;
         }
 
         logger.log(`Состояние игры: isHandInProgress=${tableState.isHandInProgress}, isBettingRoundInProgress=${tableState.isBettingRoundInProgress}`);
@@ -1188,8 +1262,117 @@ function handlePlayerAction(playerData, availableActions) {
         return;
     }
 
-    // Определяем действие на основе доступных действий игрока
-    const actionDecision = getActionForPlayer(seatIndex, availableActions, 'preflop'); // Используем 'preflop' как default
+    // Определяем действие на основе доступных действий игрока (бот по умолчанию)
+    let actionDecision = getActionForPlayer(seatIndex, availableActions, 'preflop'); // Используем 'preflop' как default
+
+    // Попытка применить ручной оверрайд только для первого игрока (seatIndex === 0)
+    if (seatIndex === 0) {
+        const cfg = manualControl.firstPlayerAction || {};
+
+        const shouldApplyByScope = () => {
+            if (cfg.scope === 'always') return true;
+            if (cfg.scope === 'first-action-session') {
+                return !state.firstActionAppliedSession;
+            }
+            if (cfg.scope === 'first-action-each-hand') {
+                return !state.firstActionAppliedInCurrentHand;
+            }
+            return false;
+        };
+
+        const pickSizedAmount = (range) => {
+            if (!range) return undefined;
+            const min = range.min ?? 0;
+            const max = range.max ?? min;
+            const sizing = (cfg.betSizing || {}).type || 'min';
+            if (sizing === 'max') return max;
+            if (sizing === 'percent') {
+                const pct = Math.max(0, Math.min(1, (cfg.betSizing || {}).percent ?? 0.5));
+                return Math.floor(min + (max - min) * pct);
+            }
+            return min; // min по умолчанию
+        };
+
+        if (cfg.mode && cfg.mode !== 'bot' && shouldApplyByScope()) {
+            const acts = availableActions.actions || [];
+            logger.log(`[manual-control] Попытка оверрайда: mode=${cfg.mode}, scope=${cfg.scope}, force=${cfg.forceAction}, acts=${JSON.stringify(acts)}`);
+            const pickFallback = () => {
+                const fb = cfg.fallbackOnUnavailable || 'call';
+                if (fb === 'call' && acts.includes('call')) return { action: 'call' };
+                if (fb === 'check' && acts.includes('check')) return { action: 'check' };
+                if (fb === 'fold' && acts.includes('fold')) return { action: 'fold' };
+                // если желаемый фолбек недоступен, берем первый доступный безопасный
+                if (acts.includes('check')) return { action: 'check' };
+                if (acts.includes('call')) return { action: 'call' };
+                if (acts.includes('fold')) return { action: 'fold' };
+                return actionDecision; // без изменений
+            };
+            if (cfg.mode === 'force') {
+                let forced = cfg.forceAction || 'fold';
+                // Особый случай allin: используем bet/raise на максимум
+                if (forced === 'allin') {
+                    if (acts.includes('bet') || acts.includes('raise')) {
+                        const act = acts.includes('bet') ? 'bet' : 'raise';
+                        const amount = pickSizedAmount(availableActions.chipRange) ?? availableActions.chipRange?.max;
+                        actionDecision = { action: act, amount };
+                        logger.log(`[manual-control] Применен ALL-IN оверрайд: ${act} ${amount}`);
+                    } else if (acts.includes('call')) {
+                        actionDecision = { action: 'call' };
+                        logger.log(`[manual-control] ALL-IN недоступен, fallback: call`);
+                    } else if (acts.includes('check')) {
+                        actionDecision = { action: 'check' };
+                        logger.log(`[manual-control] ALL-IN недоступен, fallback: check`);
+                    }
+                } else if (forced === 'bet' || forced === 'raise') {
+                    const act = forced;
+                    if (acts.includes(act)) {
+                        const amount = pickSizedAmount(availableActions.chipRange);
+                        if (amount !== undefined) {
+                            actionDecision = { action: act, amount };
+                            logger.log(`[manual-control] Применен оверрайд: ${act} ${amount}`);
+                        } else {
+                            // если нет диапазона, fallback согласно настройке
+                            actionDecision = pickFallback();
+                            logger.log(`[manual-control] ${act} недоступен (нет диапазона), fallback: ${actionDecision.action}`);
+                        }
+                    } else {
+                        actionDecision = pickFallback();
+                        logger.log(`[manual-control] Действие ${act} недоступно, fallback: ${actionDecision.action}`);
+                    }
+                } else {
+                    // fold|check|call
+                    if (acts.includes(forced)) {
+                        actionDecision = { action: forced };
+                        logger.log(`[manual-control] Применен оверрайд: ${forced}`);
+                    } else {
+                        actionDecision = pickFallback();
+                        logger.log(`[manual-control] ${forced} недоступно, fallback: ${actionDecision.action}`);
+                    }
+                }
+            } else if (cfg.mode === 'random') {
+                // случайный выбор из доступных, с учетом размеров ставок при необходимости
+                const randAct = acts[Math.floor(Math.random() * acts.length)];
+                if (randAct === 'bet' || randAct === 'raise') {
+                    const amount = pickSizedAmount(availableActions.chipRange);
+                    if (amount !== undefined) {
+                        actionDecision = { action: randAct, amount };
+                        logger.log(`[manual-control] Применен рандом оверрайд: ${randAct} ${amount}`);
+                    } else {
+                        actionDecision = { action: randAct };
+                        logger.log(`[manual-control] Применен рандом оверрайд: ${randAct}`);
+                    }
+                } else {
+                    actionDecision = { action: randAct };
+                    logger.log(`[manual-control] Применен рандом оверрайд: ${randAct}`);
+                }
+            }
+
+            // Отметим применение согласно области
+            if (cfg.scope === 'first-action-session') state.firstActionAppliedSession = true;
+            if (cfg.scope === 'first-action-each-hand') state.firstActionAppliedInCurrentHand = true;
+            logger.log(`[manual-control] Флаги применены: session=${state.firstActionAppliedSession}, hand=${state.firstActionAppliedInCurrentHand}`);
+        }
+    }
 
     if (!actionDecision) {
         logger.error(`[${name}] Не удалось определить действие`, new Error('No action determined'));

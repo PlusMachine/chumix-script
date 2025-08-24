@@ -1,0 +1,12 @@
+{
+  "firstPlayerAction": {
+    "mode": "force",
+    "scope": "first-action-each-hand",
+    "forceAction": "fold",
+    "fallbackOnUnavailable": "fold",
+    "betSizing": {
+      "type": "min",
+      "percent": 0.5
+    }
+  }
+}
