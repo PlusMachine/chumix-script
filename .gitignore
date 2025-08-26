@@ -14,3 +14,6 @@ dist/current_room_id.txt
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Windows reserved names
+nul
