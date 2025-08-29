@@ -1,4 +1,8 @@
 {
+  "gameConfig": {
+    "playerCount": 6,
+    "actionDelay": 1000
+  },
   "firstPlayerAction": {
     "mode": "force",
     "scope": "first-action-each-hand",

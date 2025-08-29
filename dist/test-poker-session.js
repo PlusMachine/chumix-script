@@ -33,30 +33,13 @@ if (!existingRoomId) {
         console.error('Ошибка при чтении Room ID из файла:', error);
     }
 }
-// Конфигурация
-const config = {
-    apiBaseUrl: 'http://localhost:3001/api/sessions',
-    socketUrl: 'http://localhost:3001/poker',
-    gameConfig: {
-        ante: 5,
-        bigBlind: 10,
-        smallBlind: 5,
-        numSeats: 6,
-        buyIn: 1000
-    },
-    players: [
-        { name: 'TightTiger' },      // Консервативный игрок
-        { name: 'WildWolf' },        // Агрессивный игрок  
-        { name: 'SlyFox' },          // Хитрый средний игрок
-        { name: 'CoolBear' },        // Осторожный игрок
-        { name: 'SharpHawk' },       // Наблюдательный игрок
-        { name: 'BoldLion' }         // Смелый игрок
-    ],
-    logFile: path_1.default.join(__dirname, 'poker-test-session.log')
-};
+
 
 // Загрузка конфига ручного управления первым игроком из внешнего файла
 const defaultManualControl = {
+    gameConfig: {
+        playerCount: 6
+    },
     firstPlayerAction: {
         // режимы: 'bot' (как сейчас), 'force' (задать конкретное действие), 'random' (рандом из доступных)
         mode: 'bot',
@@ -77,8 +60,8 @@ const defaultManualControl = {
 function loadManualControlConfig() {
     try {
         const candidates = [
-            path_1.default.join(__dirname, 'first-player.config.json'),
-            path_1.default.join(__dirname, '..', 'first-player.config.json')
+            path_1.default.join(__dirname, 'game-config.json'),
+            path_1.default.join(__dirname, '..', 'game-config.json')
         ];
         for (const p of candidates) {
             if (fs_1.default.existsSync(p)) {
@@ -87,6 +70,10 @@ function loadManualControlConfig() {
                 const merged = {
                     ...defaultManualControl,
                     ...userCfg,
+                    gameConfig: {
+                        ...defaultManualControl.gameConfig,
+                        ...(userCfg.gameConfig || {})
+                    },
                     firstPlayerAction: {
                         ...defaultManualControl.firstPlayerAction,
                         ...(userCfg.firstPlayerAction || {}),
@@ -115,6 +102,33 @@ try {
     // Логгер объявлен ниже, поэтому временно используем консоль, а затем продублируем после инициализации логгера
     console.log(`[manual-control] Эффективный конфиг: ${mc}`);
 } catch { }
+
+// Обновляем конфигурацию на основе загруженного конфига
+const playerCount = manualControl.gameConfig?.playerCount || 6;
+const actionDelay = manualControl.gameConfig?.actionDelay || 3000;
+const allPlayers = [
+    { name: 'TightTiger' },      // Консервативный игрок
+    { name: 'WildWolf' },        // Агрессивный игрок  
+    { name: 'SlyFox' },          // Хитрый средний игрок
+    { name: 'CoolBear' },        // Осторожный игрок
+    { name: 'SharpHawk' },       // Наблюдательный игрок
+    { name: 'BoldLion' }         // Смелый игрок
+];
+
+// Конфигурация
+const config = {
+    apiBaseUrl: 'http://localhost:3001/api/sessions',
+    socketUrl: 'http://localhost:3001/poker',
+    gameConfig: {
+        ante: 5,
+        bigBlind: 10,
+        smallBlind: 5,
+        numSeats: playerCount,
+        buyIn: 1000
+    },
+    players: allPlayers.slice(0, playerCount),
+    logFile: path_1.default.join(__dirname, 'poker-test-session.log')
+};
 // Инициализация логгера
 const logger = {
     log: (message) => {
@@ -136,6 +150,25 @@ fs_1.default.writeFileSync(config.logFile, '--- POKER TEST SESSION LOG ---\n');
 try {
     logger.log(`[manual-control] Эффективный конфиг: ${JSON.stringify(manualControl)}`);
 } catch { }
+
+// Создаем настроения игроков на основе количества игроков
+const createPlayerMoods = (count) => {
+    const moods = {};
+    const moodTemplates = [
+        { tilt: 0, confidence: 0.5, aggression: 0.3, luckFactor: 0.5, bluffMode: false }, // TightTiger - консервативный
+        { tilt: 0, confidence: 0.5, aggression: 0.8, luckFactor: 0.5, bluffMode: false }, // WildWolf - агрессивный
+        { tilt: 0, confidence: 0.5, aggression: 0.6, luckFactor: 0.5, bluffMode: false }, // SlyFox - хитрый средний
+        { tilt: 0, confidence: 0.5, aggression: 0.3, luckFactor: 0.5, bluffMode: false }, // CoolBear - осторожный
+        { tilt: 0, confidence: 0.5, aggression: 0.7, luckFactor: 0.5, bluffMode: false }, // SharpHawk - наблюдательный
+        { tilt: 0, confidence: 0.5, aggression: 0.75, luckFactor: 0.5, bluffMode: false }  // BoldLion - смелый
+    ];
+
+    for (let i = 0; i < count; i++) {
+        moods[i] = moodTemplates[i] || { tilt: 0, confidence: 0.5, aggression: 0.5, luckFactor: 0.5, bluffMode: false };
+    }
+    return moods;
+};
+
 // Глобальные переменные для хранения состояния
 const state = {
     roomId: existingRoomId, // Инициализируем roomId значением из аргументов командной строки, если оно есть
@@ -146,15 +179,7 @@ const state = {
     handInProgress: false,
     handleTableState: null, // Функция для обработки состояния стола
     lastHandCompleteTime: 0, // Время последнего handComplete с winners для задержки действий
-    playerMoods: {
-        // Модификаторы настроения для каждого игрока (обновляются периодически)
-        0: { tilt: 0, confidence: 0.5, aggression: 0.3, luckFactor: 0.5, bluffMode: false }, // TightTiger - консервативный
-        1: { tilt: 0, confidence: 0.5, aggression: 0.8, luckFactor: 0.5, bluffMode: false }, // WildWolf - агрессивный
-        2: { tilt: 0, confidence: 0.5, aggression: 0.6, luckFactor: 0.5, bluffMode: false }, // SlyFox - хитрый средний
-        3: { tilt: 0, confidence: 0.5, aggression: 0.3, luckFactor: 0.5, bluffMode: false }, // CoolBear - осторожный
-        4: { tilt: 0, confidence: 0.5, aggression: 0.7, luckFactor: 0.5, bluffMode: false }, // SharpHawk - наблюдательный
-        5: { tilt: 0, confidence: 0.5, aggression: 0.75, luckFactor: 0.5, bluffMode: false }  // BoldLion - смелый
-    },
+    playerMoods: createPlayerMoods(playerCount),
     moodUpdateCounter: 0 // Счетчик для периодического обновления настроения
 };
 // Флаги для контроля области применения ручного действия первого игрока
@@ -529,7 +554,9 @@ function performPlayerAction(playerData, action, amount = null) {
         actionData.amount = amount;
     }
     logger.log(`[${playerData.name}] Выполняет действие: ${action}${amount !== null ? ` с суммой ${amount}` : ''}`);
-    socket.emit('pokerAction', actionData);
+    setTimeout(() => {
+        socket.emit('pokerAction', actionData);
+    }, actionDelay);
 }
 // Функции для управления настроением игроков
 function updatePlayerMoods() {
@@ -562,7 +589,7 @@ function updatePlayerMoods() {
         // Снижаем шанс сильных изменений настроения (2% шанс вместо 4%)
         if (Math.random() < 0.02) {
             const eventType = Math.random();
-            const playerNames = ['TightTiger', 'WildWolf', 'SlyFox', 'CoolBear', 'SharpHawk', 'BoldLion'];
+            const playerNames = config.players.map(p => p.name);
             const playerName = playerNames[parseInt(seatIndex)] || `Player ${parseInt(seatIndex) + 1}`;
 
             if (eventType < 0.25) {
@@ -663,9 +690,10 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
 
     // Получаем модификаторы настроения
     const moodMods = getMoodModifiers(playerIndex);
-    const playerNames = ['TightTiger', 'WildWolf', 'SlyFox', 'CoolBear', 'SharpHawk', 'BoldLion'];
-    logger.log(`${playerNames[playerIndex]} настроение: тилт ${moodMods.currentMood.tilt}%, уверенность ${moodMods.currentMood.confidence}%, агрессия ${moodMods.currentMood.aggression}%, удача ${moodMods.currentMood.luck}%, блеф-режим: ${moodMods.currentMood.bluffMode ? 'ДА' : 'НЕТ'}`);
-    logger.log(`${playerNames[playerIndex]} модификаторы: all-in +${(moodMods.allinModifier * 100).toFixed(1)}%, агрессия +${(moodMods.aggressionModifier * 100).toFixed(1)}%, фолд +${(moodMods.foldModifier * 100).toFixed(1)}%`);
+    const playerNames = config.players.map(p => p.name);
+    const playerName = playerNames[playerIndex] || `Player ${playerIndex + 1}`;
+    logger.log(`${playerName} настроение: тилт ${moodMods.currentMood.tilt}%, уверенность ${moodMods.currentMood.confidence}%, агрессия ${moodMods.currentMood.aggression}%, удача ${moodMods.currentMood.luck}%, блеф-режим: ${moodMods.currentMood.bluffMode ? 'ДА' : 'НЕТ'}`);
+    logger.log(`${playerName} модификаторы: all-in +${(moodMods.allinModifier * 100).toFixed(1)}%, агрессия +${(moodMods.aggressionModifier * 100).toFixed(1)}%, фолд +${(moodMods.foldModifier * 100).toFixed(1)}%`);
 
     // Добавляем общий случайный фактор для разнообразия (0-1)
     const randomFactor = Math.random();
@@ -679,8 +707,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
     // Добавляем редкие случайные ходы (0.5% шанс на полностью рандомное действие - снижено)
     if (Math.random() < 0.005) {
         const randomAction = actions[Math.floor(Math.random() * actions.length)];
-        const playerNames = ['TightTiger', 'WildWolf', 'SlyFox', 'CoolBear', 'SharpHawk', 'BoldLion'];
-        logger.log(`${playerNames[playerIndex]} делает ОЧЕНЬ РЕДКОЕ случайное действие: ${randomAction}!`);
+        logger.log(`${playerName} делает ОЧЕНЬ РЕДКОЕ случайное действие: ${randomAction}!`);
 
         if (randomAction === 'bet' || randomAction === 'raise') {
             const minAmount = legalActions.chipRange?.min || 10;
@@ -699,12 +726,12 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
     switch (playerIndex) {
         case 0: // TightTiger - очень консервативный, редко блефует
             if (isUnusualBehavior) {
-                logger.log(`TightTiger сегодня в нехарактерно агрессивном настроении!`);
+                logger.log(`${playerName} сегодня в нехарактерно агрессивном настроении!`);
                 if (Math.random() < 0.15 && (actions.includes('bet') || actions.includes('raise'))) {
                     const minBet = legalActions.chipRange?.min || 10;
                     const maxBet = legalActions.chipRange?.max || 100;
                     const aggressiveBet = calculateBet(minBet, maxBet, 0.4 + Math.random() * 0.2);
-                    logger.log(`TightTiger НЕОЖИДАННО АГРЕССИВЕН: ${aggressiveBet}!`);
+                    logger.log(`${playerName} НЕОЖИДАННО АГРЕССИВЕН: ${aggressiveBet}!`);
                     return { action: actions.includes('bet') ? 'bet' : 'raise', amount: aggressiveBet };
                 }
             }
@@ -712,7 +739,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
             const allinChance0 = 0.001 + randomFactor * 0.002 + Math.max(0, moodMods.allinModifier * 0.1);
             if (Math.random() < allinChance0 && (actions.includes('bet') || actions.includes('raise'))) {
                 const maxBet = legalActions.chipRange?.max || 100;
-                logger.log(`TightTiger КРАЙНЕ РЕДКО идет ALL-IN: ${maxBet}!`);
+                logger.log(`${playerName} КРАЙНЕ РЕДКО идет ALL-IN: ${maxBet}!`);
                 return { action: actions.includes('bet') ? 'bet' : 'raise', amount: maxBet };
             }
 
@@ -730,7 +757,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
                 const maxBet = legalActions.chipRange?.max || 100;
                 const betPercentage = Math.random() * 0.2 + 0.1 + Math.max(0, aggressionBoost) + moodMods.betSizeModifier;
                 const betAmount = calculateBet(minBet, maxBet, Math.min(betPercentage, 0.4));
-                logger.log(`TightTiger делает консервативную ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
+                logger.log(`${playerName} делает консервативную ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
                 return { action: 'bet', amount: betAmount };
             }
 
@@ -740,7 +767,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
 
         case 1: // WildWolf - агрессивный, но контролируемый
             if (isUnusualBehavior && moodMods.currentMood.confidence < 40) {
-                logger.log(`WildWolf сегодня играет осторожно из-за низкой уверенности!`);
+                logger.log(`${playerName} сегодня играет осторожно из-за низкой уверенности!`);
                 if (actions.includes('check') && Math.random() < 0.7) return { action: 'check' };
                 if (actions.includes('call') && Math.random() < 0.8) return { action: 'call' };
                 if (Math.random() < 0.3 && actions.includes('fold')) return { action: 'fold' };
@@ -749,7 +776,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
             const allinChance1 = 0.003 + randomFactor * 0.005 + Math.max(0, moodMods.allinModifier * 0.2);
             if (Math.random() < allinChance1 && (actions.includes('bet') || actions.includes('raise'))) {
                 const maxBet = legalActions.chipRange?.max || 100;
-                logger.log(`WildWolf идет ALL-IN: ${maxBet}! (шанс был ${(allinChance1 * 100).toFixed(3)}%)`);
+                logger.log(`${playerName} идет ALL-IN: ${maxBet}! (шанс был ${(allinChance1 * 100).toFixed(3)}%)`);
                 return { action: actions.includes('bet') ? 'bet' : 'raise', amount: maxBet };
             }
 
@@ -759,7 +786,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
                 const maxBet = legalActions.chipRange?.max || 100;
                 const betPercentage = Math.random() * 0.3 + 0.2 + aggressionBoost * 0.3 + moodMods.betSizeModifier;
                 const betAmount = calculateBet(minBet, maxBet, Math.min(betPercentage, 0.6));
-                logger.log(`WildWolf делает агрессивную ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
+                logger.log(`${playerName} делает агрессивную ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
                 return { action: 'bet', amount: betAmount };
             }
 
@@ -769,7 +796,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
                 const maxRaise = legalActions.chipRange?.max || 100;
                 const raisePercentage = Math.random() * 0.25 + 0.2 + aggressionBoost * 0.3 + moodMods.betSizeModifier;
                 const raiseAmount = calculateBet(minRaise, maxRaise, Math.min(raisePercentage, 0.5));
-                logger.log(`WildWolf делает рейз ${raiseAmount} (${Math.round(raisePercentage * 100)}%)`);
+                logger.log(`${playerName} делает рейз ${raiseAmount} (${Math.round(raisePercentage * 100)}%)`);
                 return { action: 'raise', amount: raiseAmount };
             }
 
@@ -783,14 +810,14 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
         case 2: // SlyFox - хитрый, непредсказуемый средний игрок
             if (isUnusualBehavior) {
                 if (Math.random() < 0.5) {
-                    logger.log(`SlyFox сегодня в блефовом настроении!`);
+                    logger.log(`${playerName} сегодня в блефовом настроении!`);
                     if (Math.random() < 0.25 && (actions.includes('bet') || actions.includes('raise'))) {
                         const maxBet = legalActions.chipRange?.max || 100;
-                        logger.log(`SlyFox БЛЕФУЕТ АГРЕССИВНО: ${maxBet}!`);
+                        logger.log(`${playerName} БЛЕФУЕТ АГРЕССИВНО: ${maxBet}!`);
                         return { action: actions.includes('bet') ? 'bet' : 'raise', amount: maxBet };
                     }
                 } else {
-                    logger.log(`SlyFox играет очень пассивно!`);
+                    logger.log(`${playerName} играет очень пассивно!`);
                     if (actions.includes('check') && Math.random() < 0.8) return { action: 'check' };
                     if (Math.random() < 0.5 && actions.includes('fold')) return { action: 'fold' };
                 }
@@ -799,7 +826,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
             const allinChance2 = 0.002 + randomFactor * 0.004 + Math.max(0, moodMods.allinModifier * 0.15);
             if (Math.random() < allinChance2 && (actions.includes('bet') || actions.includes('raise'))) {
                 const maxBet = legalActions.chipRange?.max || 100;
-                logger.log(`SlyFox хитро блефует ALL-IN: ${maxBet}!`);
+                logger.log(`${playerName} хитро блефует ALL-IN: ${maxBet}!`);
                 return { action: actions.includes('bet') ? 'bet' : 'raise', amount: maxBet };
             }
 
@@ -821,7 +848,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
                 const maxBet = legalActions.chipRange?.max || 100;
                 const betPercentage = Math.random() * 0.25 + 0.15 + aggressionBoost * 0.4 + moodMods.betSizeModifier;
                 const betAmount = calculateBet(minBet, maxBet, Math.min(betPercentage, 0.65));
-                logger.log(`SlyFox делает хитрую ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
+                logger.log(`${playerName} делает хитрую ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
                 return { action: 'bet', amount: betAmount };
             }
 
@@ -832,10 +859,10 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
 
         case 3: // CoolBear - очень осторожный, тайтовый игрок
             if (isUnusualBehavior) {
-                logger.log(`CoolBear сегодня неожиданно блефует!`);
+                logger.log(`${playerName} сегодня неожиданно блефует!`);
                 if (Math.random() < 0.15 && (actions.includes('bet') || actions.includes('raise'))) {
                     const maxBet = legalActions.chipRange?.max || 100;
-                    logger.log(`CoolBear НЕОЖИДАННЫЙ БЛЕФ ОТ ТАЙТА: ${maxBet}!`);
+                    logger.log(`${playerName} НЕОЖИДАННЫЙ БЛЕФ ОТ ТАЙТА: ${maxBet}!`);
                     return { action: actions.includes('bet') ? 'bet' : 'raise', amount: maxBet };
                 }
             }
@@ -843,7 +870,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
             const allinChance3 = 0.0005 + randomFactor * 0.0015 + Math.max(0, moodMods.allinModifier * 0.05);
             if (Math.random() < allinChance3 && (actions.includes('bet') || actions.includes('raise'))) {
                 const maxBet = legalActions.chipRange?.max || 100;
-                logger.log(`CoolBear УЛЬТРА РЕДКИЙ ALL-IN: ${maxBet}! (скорее всего натсы)`);
+                logger.log(`${playerName} УЛЬТРА РЕДКИЙ ALL-IN: ${maxBet}! (скорее всего натсы)`);
                 return { action: actions.includes('bet') ? 'bet' : 'raise', amount: maxBet };
             }
 
@@ -866,11 +893,11 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
                 let betPercentage = Math.random() * 0.15 + 0.1;
                 if (Math.random() < 0.08) {
                     betPercentage = Math.random() * 0.25 + 0.25;
-                    logger.log(`CoolBear НЕОЖИДАННО делает БОЛЬШУЮ ставку!`);
+                    logger.log(`${playerName} НЕОЖИДАННО делает БОЛЬШУЮ ставку!`);
                 }
                 betPercentage += aggressionBoost * 0.3 + moodMods.betSizeModifier;
                 const betAmount = calculateBet(minBet, maxBet, Math.min(betPercentage, 0.55));
-                logger.log(`CoolBear делает осторожную ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
+                logger.log(`${playerName} делает осторожную ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
                 return { action: 'bet', amount: betAmount };
             }
 
@@ -879,14 +906,14 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
 
         case 4: // SharpHawk - наблюдательный, тактический игрок
             if (isUnusualBehavior) {
-                logger.log(`SharpHawk меняет тактику!`);
+                logger.log(`${playerName} меняет тактику!`);
                 if (Math.random() < 0.3) {
                     if (actions.includes('check') && Math.random() < 0.6) return { action: 'check' };
                 } else if (Math.random() < 0.2 && (actions.includes('bet') || actions.includes('raise'))) {
                     const minBet = legalActions.chipRange?.min || 10;
                     const maxBet = legalActions.chipRange?.max || 100;
                     const tacticalBet = calculateBet(minBet, maxBet, 0.5 + Math.random() * 0.3);
-                    logger.log(`SharpHawk делает тактическую ставку: ${tacticalBet}!`);
+                    logger.log(`${playerName} делает тактическую ставку: ${tacticalBet}!`);
                     return { action: actions.includes('bet') ? 'bet' : 'raise', amount: tacticalBet };
                 }
             }
@@ -894,7 +921,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
             const allinChance4 = 0.002 + randomFactor * 0.003 + Math.max(0, moodMods.allinModifier * 0.12);
             if (Math.random() < allinChance4 && (actions.includes('bet') || actions.includes('raise'))) {
                 const maxBet = legalActions.chipRange?.max || 100;
-                logger.log(`SharpHawk тактически идет ALL-IN: ${maxBet}!`);
+                logger.log(`${playerName} тактически идет ALL-IN: ${maxBet}!`);
                 return { action: actions.includes('bet') ? 'bet' : 'raise', amount: maxBet };
             }
 
@@ -907,7 +934,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
                 const maxBet = legalActions.chipRange?.max || 100;
                 const betPercentage = Math.random() * 0.3 + 0.2 + aggressionBoost * 0.4 + moodMods.betSizeModifier;
                 const betAmount = calculateBet(minBet, maxBet, Math.min(betPercentage, 0.7));
-                logger.log(`SharpHawk делает тактическую ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
+                logger.log(`${playerName} делает тактическую ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
                 return { action: 'bet', amount: betAmount };
             }
 
@@ -919,10 +946,10 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
 
         case 5: // BoldLion - смелый, решительный игрок
             if (isUnusualBehavior) {
-                logger.log(`BoldLion в особенно смелом настроении!`);
+                logger.log(`${playerName} в особенно смелом настроении!`);
                 if (Math.random() < 0.25 && (actions.includes('bet') || actions.includes('raise'))) {
                     const maxBet = legalActions.chipRange?.max || 100;
-                    logger.log(`BoldLion СМЕЛО идет ва-банк: ${maxBet}!`);
+                    logger.log(`${playerName} СМЕЛО идет ва-банк: ${maxBet}!`);
                     return { action: actions.includes('bet') ? 'bet' : 'raise', amount: maxBet };
                 }
             }
@@ -930,7 +957,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
             const allinChance5 = 0.004 + randomFactor * 0.006 + Math.max(0, moodMods.allinModifier * 0.25);
             if (Math.random() < allinChance5 && (actions.includes('bet') || actions.includes('raise'))) {
                 const maxBet = legalActions.chipRange?.max || 100;
-                logger.log(`BoldLion СМЕЛО идет ALL-IN: ${maxBet}!`);
+                logger.log(`${playerName} СМЕЛО идет ALL-IN: ${maxBet}!`);
                 return { action: actions.includes('bet') ? 'bet' : 'raise', amount: maxBet };
             }
 
@@ -940,7 +967,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
                 const maxBet = legalActions.chipRange?.max || 100;
                 const betPercentage = Math.random() * 0.35 + 0.25 + aggressionBoost * 0.4 + moodMods.betSizeModifier;
                 const betAmount = calculateBet(minBet, maxBet, Math.min(betPercentage, 0.75));
-                logger.log(`BoldLion делает смелую ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
+                logger.log(`${playerName} делает смелую ставку ${betAmount} (${Math.round(betPercentage * 100)}%)`);
                 return { action: 'bet', amount: betAmount };
             }
 
@@ -950,7 +977,7 @@ function getActionForPlayer(playerIndex, legalActions, roundOfBetting) {
                 const maxRaise = legalActions.chipRange?.max || 100;
                 const raisePercentage = Math.random() * 0.3 + 0.2 + aggressionBoost * 0.4 + moodMods.betSizeModifier;
                 const raiseAmount = calculateBet(minRaise, maxRaise, Math.min(raisePercentage, 0.65));
-                logger.log(`BoldLion делает смелый рейз ${raiseAmount} (${Math.round(raisePercentage * 100)}%)`);
+                logger.log(`${playerName} делает смелый рейз ${raiseAmount} (${Math.round(raisePercentage * 100)}%)`);
                 return { action: 'raise', amount: raiseAmount };
             }
 
@@ -1230,6 +1257,7 @@ async function runTest() {
     }
 }
 // Выводим справку о режиме запуска
+logger.log(`Количество игроков: ${playerCount}`);
 if (existingRoomId) {
     logger.log(`Запуск в режиме подключения к существующей сессии с ID: ${existingRoomId}`);
 }
